@@ -1,9 +1,3 @@
-
-build_kernel.yml
-swolfkrow/buhtig.
-
-
-
 name: Build Kernel Poco F6
 on:
   workflow_dispatch:
@@ -12,14 +6,17 @@ on:
         description: 'Kernel Source URL'
         required: true
         default: 'https://github.com/MiCode/Xiaomi_Kernel_OpenSource'
+        type: string
       kernel_branch:
-        description: 'Kernel Branch (check if peridot-v-oss exists)'
+        description: 'Kernel Branch'
         required: true
         default: 'peridot-u-oss'
+        type: string
       config_file:
         description: 'Defconfig Name'
         required: true
         default: 'peridot_defconfig'
+        type: string
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -39,9 +36,6 @@ jobs:
     - name: Get Clang
       run: |
         mkdir -p clang
-        # Using a popular prebuilt clang (Neutron) as an example, or standard Google clang
-        # For simplicity, let's use a known stable AOSP clang or similar.
-        # Here we use a generic fetch script or direct download.
         git clone --depth=1 https://github.com/kdrag0n/proton-clang clang
     - name: Get Kernel Source
       run: |
@@ -62,14 +56,7 @@ jobs:
         git clone https://gitlab.com/simonpunk/susfs4ksu.git
         
         # NOTE: SUFS patching is complex and varies by kernel version.
-        # This is a best-effort automated attempt. You may need to manually adjust paths.
-        
-        # Copying susfs files to kernel source
-        # cp -r susfs4ksu/kernel_patches/fs/* fs/
-        # cp -r susfs4ksu/kernel_patches/include/* include/
-        
-        # YOU MUST MANUALLY APPLY PATCHES HERE OR UNCOMMENT THE ABOVE IF PATHS MATCH
-        # For now we just list what's downloaded so you can debug
+        # This is a best-effort automated attempt.
         ls -R susfs4ksu
     - name: Build Kernel
       working-directory: kernel_workspace
@@ -83,7 +70,6 @@ jobs:
         
         make O=out ${{ github.event.inputs.config_file }}
         
-        # Adjust -j$(nproc) as needed
         make -j$(nproc --all) O=out \
                       CC=clang \
                       CROSS_COMPILE=aarch64-linux-gnu- \
