@@ -23,41 +23,74 @@ jobs:
     steps:
     - name: Checkout Workflow
       uses: actions/checkout@v4
+    
     - name: Cleanup Environment
       run: |
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /opt/ghc
         sudo rm -rf "/usr/local/share/boost"
         sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+    
     - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3 gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+    
     - name: Get Clang
       run: |
         mkdir -p clang
         git clone --depth=1 https://github.com/kdrag0n/proton-clang clang
+    
     - name: Get Kernel Source
       run: |
         git clone --depth=1 ${{ github.event.inputs.kernel_source }} -b ${{ github.event.inputs.kernel_branch }} kernel_workspace
+    
     - name: Setup KernelSU Next
       working-directory: kernel_workspace
       run: |
         echo "Removing missing hwid driver references..."
-        sed -i '/hwid/d' drivers/misc/Kconfig
-        sed -i '/hwid/d' drivers/misc/Makefile
+        sed -i '/hwid/d' drivers/misc/Kconfig || true
+        sed -i '/hwid/d' drivers/misc/Makefile || true
+        
         echo "Setting up KernelSU Next..."
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        
         echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ github.event.inputs.config_file }}
-    - name: Setup SUFS (Experimental)
+    
+    - name: Setup SUSFS (Fixed)
       working-directory: kernel_workspace
       run: |
-        echo "Downloading SUFS patches..."
-        git clone https://gitlab.com/simonpunk/susfs4ksu.git
+        echo "Cloning SUSFS..."
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git susfs
         
-        # NOTE: SUFS patching is complex and varies by kernel version.
-        # This is a best-effort automated attempt.
-        ls -R susfs4ksu
+        # Check kernel version untuk tau patch mana yang dipake
+        KERNEL_VER=$(make kernelversion | cut -d'.' -f1-2)
+        echo "Detected kernel version: $KERNEL_VER"
+        
+        # Apply SUSFS patches (sesuaikan dengan versi kernel)
+        if [ -d "susfs/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
+          echo "Applying SUSFS patches..."
+          
+          # Copy SUSFS source files
+          cp -r susfs/kernel_patches/fs/susfs fs/ || echo "SUSFS fs copy failed, might not exist"
+          
+          # Try to apply main patches
+          for patch in susfs/kernel_patches/KernelSU/*.patch; do
+            if [ -f "$patch" ]; then
+              echo "Trying to apply: $patch"
+              patch -p1 < "$patch" || echo "Patch $patch failed or already applied"
+            fi
+          done
+          
+          # Enable SUSFS in config
+          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/${{ github.event.inputs.config_file }}
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/${{ github.event.inputs.config_file }}
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> arch/arm64/configs/${{ github.event.inputs.config_file }}
+        else
+          echo "WARNING: SUSFS patches not found in expected location"
+          echo "SUSFS might not be fully integrated!"
+        fi
+    
     - name: Build Kernel
       working-directory: kernel_workspace
       run: |
@@ -68,8 +101,10 @@ jobs:
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
         export CC=clang
         
+        echo "Loading defconfig..."
         make O=out ${{ github.event.inputs.config_file }}
         
+        echo "Starting kernel build..."
         make -j$(nproc --all) O=out \
                       CC=clang \
                       CROSS_COMPILE=aarch64-linux-gnu- \
@@ -80,26 +115,121 @@ jobs:
                       OBJCOPY=llvm-objcopy \
                       OBJDUMP=llvm-objdump \
                       STRIP=llvm-strip
+        
+        echo "Build completed! Checking outputs..."
+        ls -lh out/arch/arm64/boot/
+    
+    - name: Check Kernel Size
+      working-directory: kernel_workspace
+      run: |
+        echo "=== Kernel Build Output ==="
+        if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          echo "✓ Image.gz-dtb found:"
+          ls -lh out/arch/arm64/boot/Image.gz-dtb
+        fi
+        if [ -f out/arch/arm64/boot/Image.gz ]; then
+          echo "✓ Image.gz found:"
+          ls -lh out/arch/arm64/boot/Image.gz
+        fi
+        if [ -f out/arch/arm64/boot/Image ]; then
+          echo "✓ Image found:"
+          ls -lh out/arch/arm64/boot/Image
+        fi
+        echo "======================="
+    
     - name: Package AnyKernel3
       working-directory: kernel_workspace
       run: |
         git clone https://github.com/osm0sis/AnyKernel3
-        cp out/arch/arm64/boot/Image AnyKernel3/
+        
+        # Copy kernel image (prioritas: Image.gz-dtb > Image.gz > Image)
+        if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          echo "Using Image.gz-dtb"
+          cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          KERNEL_FILE="Image.gz-dtb"
+        elif [ -f out/arch/arm64/boot/Image.gz ]; then
+          echo "Using Image.gz"
+          cp out/arch/arm64/boot/Image.gz AnyKernel3/
+          KERNEL_FILE="Image.gz"
+        elif [ -f out/arch/arm64/boot/Image ]; then
+          echo "Using Image (fallback)"
+          cp out/arch/arm64/boot/Image AnyKernel3/
+          KERNEL_FILE="Image"
+        else
+          echo "ERROR: No kernel image found!"
+          exit 1
+        fi
+        
+        # Copy dtb/dtbo if exists
+        if [ -f out/arch/arm64/boot/dtb.img ]; then
+          cp out/arch/arm64/boot/dtb.img AnyKernel3/
+        fi
+        if [ -f out/arch/arm64/boot/dtbo.img ]; then
+          cp out/arch/arm64/boot/dtbo.img AnyKernel3/
+        fi
+        
         cd AnyKernel3
         
-        # Modify anykernel.sh for Poco F6 (peridot)
-        # Using simple sed to set device properties if generic script needs it
-        # Actually osm0sis generic script is usually auto-detect, but let's be safe.
-        # We will zip it as is, expecting the user to know generic AK3 works or manual tweak.
-        # Ideally we should use a device specific AK3 but generic usually works for GKI if slots are detected.
+        # Configure for Poco F6
+        cat > anykernel.sh << 'EOF'
+        # AnyKernel3 Ramdisk Mod Script
+        # osm0sis @ xda-developers
+        
+        ## AnyKernel setup
+        # begin properties
+        properties() { '
+        kernel.string=Poco F6 KernelSU Next by GitHub Actions
+        do.devicecheck=1
+        do.modules=0
+        do.systemless=1
+        do.cleanup=1
+        do.cleanuponabort=0
+        device.name1=peridot
+        device.name2=vermeer
+        device.name3=marble
+        device.name4=marblein
+        device.name5=pocoF6
+        supported.versions=13-15
+        supported.patchlevels=
+        '; } # end properties
+        
+        ## AnyKernel methods (DO NOT CHANGE)
+        # import patching functions/variables - see for reference
+        . tools/ak3-core.sh;
+        
+        ## AnyKernel boot install
+        dump_boot;
+        write_boot;
+        ## end boot install
+        EOF
+        
+        chmod +x anykernel.sh
         
         # Clean up git
-        rm -rf .git
+        rm -rf .git .github
+        
+        # Show what we're packing
+        echo "=== Files in AnyKernel3 ==="
+        ls -lh
+        echo "=========================="
         
         # Create Zip
-        zip -r9 ../Kernel-PocoF6-KSU-Next.zip *
+        zip -r9 ../Kernel-PocoF6-KSU-SUSFS.zip *
+        
+        cd ..
+        echo "Final zip size:"
+        ls -lh Kernel-PocoF6-KSU-SUSFS.zip
+    
     - name: Upload Flashable Zip
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-PocoF6-KSU-Next
-        path: kernel_workspace/Kernel-PocoF6-KSU-Next.zip
+        name: Kernel-PocoF6-KSU-SUSFS
+        path: kernel_workspace/Kernel-PocoF6-KSU-SUSFS.zip
+    
+    - name: Upload Kernel Image (Debug)
+      uses: actions/upload-artifact@v4
+      with:
+        name: Kernel-Image-Raw
+        path: |
+          kernel_workspace/out/arch/arm64/boot/Image*
+          kernel_workspace/out/arch/arm64/boot/*.img
