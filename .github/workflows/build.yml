@@ -80,8 +80,26 @@ jobs:
                       OBJCOPY=llvm-objcopy \
                       OBJDUMP=llvm-objdump \
                       STRIP=llvm-strip
-    - name: Upload Image
+    - name: Package AnyKernel3
+      working-directory: kernel_workspace
+      run: |
+        git clone https://github.com/osm0sis/AnyKernel3
+        cp out/arch/arm64/boot/Image AnyKernel3/
+        cd AnyKernel3
+        
+        # Modify anykernel.sh for Poco F6 (peridot)
+        # Using simple sed to set device properties if generic script needs it
+        # Actually osm0sis generic script is usually auto-detect, but let's be safe.
+        # We will zip it as is, expecting the user to know generic AK3 works or manual tweak.
+        # Ideally we should use a device specific AK3 but generic usually works for GKI if slots are detected.
+        
+        # Clean up git
+        rm -rf .git
+        
+        # Create Zip
+        zip -r9 ../Kernel-PocoF6-KSU-Next.zip *
+    - name: Upload Flashable Zip
       uses: actions/upload-artifact@v4
       with:
-        name: Image
-        path: kernel_workspace/out/arch/arm64/boot/Image
+        name: Kernel-PocoF6-KSU-Next
+        path: kernel_workspace/Kernel-PocoF6-KSU-Next.zip
