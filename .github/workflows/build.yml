@@ -43,6 +43,9 @@ jobs:
     - name: Setup KernelSU Next (Manual Hook)
       working-directory: kernel_workspace
       run: |
+        echo "Removing missing hwid driver references..."
+        sed -i '/hwid/d' drivers/misc/Kconfig
+        sed -i '/hwid/d' drivers/misc/Makefile
         echo "Setting up KernelSU Next..."
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
         
