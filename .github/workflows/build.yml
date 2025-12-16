@@ -5,7 +5,7 @@ on:
       kernel_source:
         description: 'Kernel Source URL'
         required: true
-        default: 'https://github.com/MiCode/Xiaomi_Kernel_OpenSource'
+        default: 'https://github.com/Peridot-Development/kernel_xiaomi_peridot'
         type: string
       kernel_branch:
         description: 'Kernel Branch'
