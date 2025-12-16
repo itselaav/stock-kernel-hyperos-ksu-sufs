@@ -1,3 +1,9 @@
+
+build_kernel.yml
+swolfkrow/buhtig.
+
+
+
 name: Build Kernel Poco F6
 on:
   workflow_dispatch:
@@ -40,7 +46,7 @@ jobs:
     - name: Get Kernel Source
       run: |
         git clone --depth=1 ${{ github.event.inputs.kernel_source }} -b ${{ github.event.inputs.kernel_branch }} kernel_workspace
-    - name: Setup KernelSU Next (Manual Hook)
+    - name: Setup KernelSU Next
       working-directory: kernel_workspace
       run: |
         echo "Removing missing hwid driver references..."
@@ -48,21 +54,7 @@ jobs:
         sed -i '/hwid/d' drivers/misc/Makefile
         echo "Setting up KernelSU Next..."
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-        
-        echo "Applying Manual Hook Patch..."
-        # Download min_scope_syscall_hooks_v1.4.patch
-        cd ..
-        wget https://raw.githubusercontent.com/KernelSU-Next/kernel_patches/main/syscall_hook/min_scope_syscall_hooks_v1.4.patch
-        cd kernel_workspace
-        
-        # Apply patch (ignore potential whitespace errors)
-        # Note: If this fails, the build will fail. This is risky but standard for manual hook.
-        git apply --ignore-space-change --ignore-whitespace ../min_scope_syscall_hooks_v1.4.patch || echo "Patch application had issues, checking if critical..."
-        echo "Configuring Kernel for Manual Hook..."
-        # Enable KSU, Enable Manual Hook, Disable Kprobes Hook
         echo "CONFIG_KSU=y" >> arch/arm64/configs/${{ github.event.inputs.config_file }}
-        echo "CONFIG_KSU_MANUAL_HOOK=y" >> arch/arm64/configs/${{ github.event.inputs.config_file }}
-        echo "CONFIG_KSU_KPROBES_HOOK=n" >> arch/arm64/configs/${{ github.event.inputs.config_file }}
     - name: Setup SUFS (Experimental)
       working-directory: kernel_workspace
       run: |
